@@ -1,0 +1,858 @@
+---
+title: "MNIST_Typographical_Adjustments"
+author: "Samraj Singh"
+output: pdf_document
+---
+
+```{r, eval = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# Load required packages
+library(tidyverse)
+library(Rtsne)
+library(ggthemes)
+library(ggplot2)
+library(class)
+library(caret)
+library(MASS)
+library(stats)
+```
+
+```{r, eval = FALSE}
+# Load the EMNIST dataset
+emnist <- read.csv("emnist-balanced-train.csv", header = FALSE)
+labels <- emnist[,1]
+data   <- emnist[,2:785]
+
+# Normalise the data to 0 and 1
+data <- data / 255
+
+# Define label mapping with desired letters and their corresponding numeric labels
+label_mapping <- c(0:9, LETTERS[1:26], letters[c(1:2, 4:8, 14, 17:18, 20)])
+label_text <- label_mapping[labels + 1]
+emnist$label_text <- label_text
+
+# Remove duplicated rows labels 
+label_text <- label_text[!duplicated(data)]
+
+# Remove duplicate rows and assign labels
+data <- unique(data)
+data$label_text <- label_text
+```
+
+```{r, eval = FALSE}
+# Define a function to add dot to zero
+zero_dot_modifier <- function(image, radius) {
+  
+  # Convert input to a matrix
+  image_matrix <- matrix(as.numeric(image), nrow = 28, ncol = 28)
+  
+  # Calculate center of mass for each axis
+  rows <- 1:28
+  cols <- 1:28
+  x <- round(sum(colSums(image_matrix) * cols) / sum(image_matrix))
+  y <- round(sum(rowSums(image_matrix) * rows) / sum(image_matrix))
+  
+  # Create a matrix with the same dimensions as image_matrix and fill it with distance values
+  distance_matrix <- outer(rows, cols, function(i, j) sqrt((x - i)^2 + (y - j)^2))
+  
+  # Modify pixel values based on the distance from the center of mass
+  image_matrix[distance_matrix <= radius] <- 1
+  image_matrix[distance_matrix > radius & distance_matrix <= (radius + 0.5)] <- 0.5
+  
+  return(image_matrix)
+}
+
+# Define a function to add slash to zero
+zero_line_modifier <- function(image) {
+  
+  # Convert input to a matrix
+  image_matrix <- matrix(as.numeric(image), nrow = 28, ncol = 28)
+  
+  # Calculate center of mass for each axis
+  rows <- 1:28
+  cols <- 1:28
+  x <- round(sum(colSums(image_matrix) * cols) / sum(image_matrix))
+  y <- round(sum(rowSums(image_matrix) * rows) / sum(image_matrix))
+  
+  # Add a slanted line through the zero using function
+  slope <- -1
+  y_intercept <- y - slope * x
+  
+  # Determine the start and end points of the line segment within the zero's boundary
+  non_zero_indices <- which(image_matrix > 0.99, arr.ind = TRUE)
+  min_col <- min(non_zero_indices[, 2])
+  max_col <- max(non_zero_indices[, 2])
+  start_row <- round(slope * min_col + y_intercept)
+  end_row <- round(slope * max_col + y_intercept)
+  
+  # Create a matrix with the same dimensions as image_matrix and fill it with distance values
+  distance_matrix <- outer(rows, cols, function(i, j) abs(i - slope * j - y_intercept))
+  
+  # Modify pixel values based on the distance from the line
+  line_width <- 1
+  line_shortening <- 3
+  image_matrix[distance_matrix <= line_width &
+                 cols >= (min_col + line_shortening) & cols <= (max_col - line_shortening) &
+                 rows >= (min(start_row, end_row) + line_shortening) & 
+                 rows <= (max(start_row, end_row) - line_shortening)] <- 1
+  
+  return(image_matrix)
+}
+
+# Define a function to add line through seven
+add_line_to_7 <- function(img) {
+  
+  # Convert input to a matrix
+  image_matrix <- matrix(as.numeric(img), nrow = 28, ncol = 28)
+  
+  # Calculate center of mass for each axis
+  rows <- 1:28
+  cols <- 1:28
+  x <- round(sum(colSums(image_matrix) * cols) / sum(image_matrix))
+  y <- round(sum(rowSums(image_matrix) * rows) / sum(image_matrix))
+  
+  # Add a horizontal line through the center of the 7, ensuring it stays within bounds
+  x_start <- x - 3
+  x_end <- x + 10
+  
+  # While loop ensures all line coordinates stay within 28x28 dimensions
+  while (x_start < 1 || x_end > 28) {
+    if (x_start < 1) {
+      x_start <- x_start + 1
+    }
+    if (x_end > 28) {
+      x_end <- x_end - 1
+    }
+  }
+  
+  # Modify pixel values to add line
+  image_matrix[x_start:x_end, y:(y + 1)] <- 1
+  
+  return(image_matrix)
+}
+
+# Define a function to line to bottom of one
+add_bottom_line_to_1 <- function(img) {
+  
+  # Convert input to a matrix
+  image_matrix <- matrix(as.numeric(img), nrow = 28, ncol = 28)
+  
+  # Find pixel values greater than 0.15 and use that to find bottom x
+  non_zero_indices <- which(image_matrix > 0.15, arr.ind = TRUE)
+  max_row <- max(non_zero_indices[, 2])
+  
+  # Calculate COM x-coordinate for max_row
+  cols <- 1:28
+  max_row_values <- image_matrix[, max_row]
+  x_max <- round(sum(max_row_values * cols) / sum(max_row_values))
+  
+  x_start <- x_max - 5
+  x_end <- x_max + 5
+  
+  # While loop ensures all line coordinates stay within 28x28 dimensions
+  while (x_start < 1 || x_end > 28) {
+  if (x_start < 1) {
+    x_start <- x_start + 1 
+  }
+  if (x_end > 28) {
+    x_end <- x_end - 1
+  }
+    }
+  
+  # Modify pixel values to add line
+  image_matrix[x_start:x_end, max_row] <- 1
+  
+  return(image_matrix)
+}
+
+# Define a function to angled line to one
+add_angled_line_to_1 <- function(img) {
+  
+  image_matrix <- matrix(as.numeric(img), nrow = 28, ncol = 28)
+  
+  # Find the highest non-zero row for each 1 digit
+  non_zero_indices <- which(image_matrix > 0.15, arr.ind = TRUE)
+  min_row <- min(non_zero_indices[, 2])
+  min_col <- non_zero_indices[non_zero_indices[, 2] == min_row, 1]
+  
+  # Add a short angled line to the top of the 1, making sure it stays within bounds
+  for (i in 0:4) {
+    new_col <- max(min_col - i, 1)
+    new_row <- min(min_row + i, 28)
+    image_matrix[new_col, new_row] <- 1
+  }
+  
+  return(image_matrix)
+}
+
+
+# Define a function to add an angled line to the top and a line to the bottom of the one
+add_lines_to_1 <- function(img) {
+  
+  # Convert input to a matrix
+  image_matrix <- matrix(as.numeric(img), nrow = 28, ncol = 28)
+  
+  # Find the non-zero points for lines
+  non_zero_indices <- which(image_matrix > 0.15, arr.ind = TRUE)
+  min_row <- min(non_zero_indices[, 2])
+  min_col <- non_zero_indices[non_zero_indices[, 2] == min_row, 1]
+  max_row <- max(non_zero_indices[, 2])
+  
+  # Add a short angled line to the top of the 1, making sure it stays within bounds
+  for (i in 0:4) {
+    new_col <- max(min_col - i, 1)
+    new_row <- min(min_row + i, 28)
+    image_matrix[new_col, new_row] <- 1
+  }
+  
+  # Calculate COM x-coordinate for max_row
+  cols <- 1:28
+  max_row_values <- image_matrix[, max_row]
+  x_max <- round(sum(max_row_values * cols) / sum(max_row_values))
+  
+  x_start <- x_max - 5
+  x_end <- x_max + 5
+  
+  # While loop ensures all line coordinates stay within 28x28 dimensions
+  while (x_start < 1 || x_end > 28) {
+  if (x_start < 1) {
+    x_start <- x_start + 1 
+  }
+  if (x_end > 28) {
+    x_end <- x_end - 1
+  }
+    }
+  
+  # Add a horizontal line to the bottom of the 1
+  image_matrix[x_start:x_end, max_row] <- 1
+  
+  return(image_matrix)
+}
+
+
+# Define a function to add the line to the center of the z
+add_line_to_z <- function(img) {
+  
+  # Convert input to a matrix
+  image_matrix <- matrix(as.numeric(img), nrow = 28, ncol = 28)
+  
+  # Calculate center of mass for each axis
+  rows <- 1:28
+  cols <- 1:28
+  x <- round(sum(colSums(image_matrix) * cols) / sum(image_matrix))
+  y <- round(sum(rowSums(image_matrix) * rows) / sum(image_matrix))
+  
+  # Add a horizontal line through the center of the z, ensuring it stays within bounds
+  start_x <- max(x - 9, 1)
+  end_x <- min(x + 9, 28)
+  image_matrix[start_x:end_x, y:(y+1)] <- 1
+  
+  return(image_matrix)
+}
+
+# Define a function to add the lines to top and bottom of I
+add_line_to_I <- function(img) {
+  
+  # Convert input to a matrix
+  image_matrix <- matrix(as.numeric(img), nrow = 28, ncol = 28)
+  
+  # Find the lowest and highest row with greater than 0.15 pixel value
+  non_zero_indices <- which(image_matrix > 0.15, arr.ind = TRUE)
+  max_row <- max(non_zero_indices[, 2])
+  min_row <- min(non_zero_indices[, 2])
+  
+  # Calculate COM x-coordinate for max_row
+  cols <- 1:28
+  max_row_values <- image_matrix[, max_row]
+  x_max <- round(sum(max_row_values * cols) / sum(max_row_values))
+
+  # Calculate COM x-coordinate for min_row
+  min_row_values <- image_matrix[, min_row]
+  x_min <- round(sum(min_row_values * cols) / sum(min_row_values))
+  
+
+  x_start_max <- x_max - 5
+  x_end_max <- x_max + 5
+  x_start_min <- x_min - 5
+  x_end_min <- x_min + 5
+  
+  # While loop makes sure lines are in boundary
+  while (x_start_max < 1 || x_end_max > 28) {
+    if (x_start_max < 1) {
+      x_start_max <- x_start_max + 1 
+    }
+    if (x_end_max > 28) {
+      x_end_max <- x_end_max - 1
+    }
+  }
+
+ 
+  while (x_start_min < 1 || x_end_min > 28) {
+    if (x_start_min < 1) {
+      x_start_min <- x_start_min + 1 
+    }
+    if (x_end_min > 28) {
+      x_end_min <- x_end_min - 1
+    }
+  }
+
+  # Add a horizontal line to the top and bottom of the I
+  image_matrix[x_start_max:x_end_max, max_row] <- 1
+  image_matrix[x_start_min:x_end_min, min_row] <- 1
+  
+  return(image_matrix)
+}
+```
+
+```{r, eval = FALSE}
+# Get indices of all variables of interest 
+zero_indices <- which(data$label_text == 0)
+seven_indices <- which(data$label_text == 7)
+one_indices <- which(data$label_text == 1)
+z_indices <- which(data$label_text == "Z")
+I_indices <- which(data$label_text == "I")
+
+# Define function that generates new data set with specified modifications
+modify_and_update_data <- function(indices, img_modifier, radius = NULL) {
+  
+  # Assign new data frame
+  altered_data <- data[, -785]
+  
+  # Loop through specified indices and alter images
+  for (idx in indices) {
+    
+    img <- matrix(data[idx, -785], nrow = 28, ncol = 28, byrow = TRUE)
+    
+    if (!is.null(radius)) {
+      
+      # When adding dot to zero include radius argument
+      img_with_line <- img_modifier(img, radius)
+    } else {
+      
+      # Otherwise, alter image 
+      img_with_line <- img_modifier(img)
+    }
+    
+    # Save altered images to data frame
+    altered_data[idx,] <- as.matrix(img_with_line)
+  }
+  return(altered_data)
+}
+
+# Generate altered datasets 
+altered_data <- modify_and_update_data(zero_indices, zero_dot_modifier, radius = 2.5) 
+altered_data2 <- modify_and_update_data(zero_indices, zero_line_modifier) 
+altered_data3 <- modify_and_update_data(seven_indices, add_line_to_7)
+altered_data4 <- modify_and_update_data(one_indices, add_bottom_line_to_1) 
+altered_data5 <- modify_and_update_data(one_indices, add_angled_line_to_1) 
+altered_data6 <- modify_and_update_data(one_indices, add_lines_to_1) 
+altered_data7 <- modify_and_update_data(z_indices, add_line_to_z)
+altered_data8 <- modify_and_update_data(I_indices, add_line_to_I)
+```
+
+```{r, eval = FALSE}
+# Define function to plot image
+plot_image <- function(img, label) {
+  img <- as.matrix(img, nrow = 28, ncol = 28, byrow = TRUE)
+  dim(img) <- c(28, 28)
+  img <- t(apply(img, 2, rev)) # Rotate values twice
+  title <- paste("Normal", label)
+  image(img, col = gray((0:255) / 255), xaxt = 'n', yaxt = 'n', main = title)
+}
+
+# Define function to plot altered image
+plot_altered_image <- function(img, label) {
+  img <- as.matrix(img, nrow = 28, ncol = 28, byrow = TRUE)
+  dim(img) <- c(28, 28)
+  img <- t(apply(img, 1, rev)) # Rotate values once
+  title <- paste("Altered", label)
+  image(img, col = gray((0:255) / 255), xaxt = 'n', yaxt = 'n', main = title)
+}
+
+# Plot images
+par(mfrow = c(1, 2)) 
+plot_image(data[zero_indices[1], -785], "0")
+plot_altered_image(altered_data[zero_indices[1],], "0")
+
+plot_image(data[zero_indices[1], -785], "0")
+plot_altered_image(altered_data2[zero_indices[1],], "0 - Slash")
+
+plot_image(data[seven_indices[1], -785], "7")
+plot_altered_image(altered_data3[seven_indices[1],], "7")
+
+plot_image(data[one_indices[2], -785], "1")
+plot_altered_image(altered_data4[one_indices[2],], "1")
+
+plot_image(data[one_indices[2], -785], "1")
+plot_altered_image(altered_data5[one_indices[2],], "1")
+
+plot_image(data[one_indices[2], -785], "1")
+plot_altered_image(altered_data6[one_indices[2],], "1 - Both Lines")
+
+plot_image(data[z_indices[2], -785], "Z")
+plot_altered_image(altered_data7[z_indices[2],], "Z")
+
+plot_image(data[I_indices[2], -785], "I")
+plot_altered_image(altered_data8[I_indices[2],], "I")
+```
+
+```{r, eval = FALSE}
+# Set the sample size per label
+sample_size_per_label <- 100
+
+# Get unique labels
+unique_labels <- unique(label_text)
+balanced_sample <- data.frame()
+
+# Generate small balanced subset
+for (label in unique_labels) {
+  label_data <- data[label_text == label, ]
+  sample_indices <- sample(1:nrow(label_data), min(sample_size_per_label, nrow(label_data)))
+  label_sample <- label_data[sample_indices, ]
+  label_sample$label <- label_text[label_text == label][sample_indices] 
+  balanced_sample <- rbind(balanced_sample, label_sample)
+}
+
+# Compute the dissimilarity matrix 
+dissimilarity_matrix <- dist(balanced_sample[, -ncol(balanced_sample)])
+
+# Set for reproducibility
+set.seed(123) 
+
+# Perform nMDS
+nmds_result <- isoMDS(dissimilarity_matrix, maxit = 1000) 
+
+# Convert the nMDS result to a data frame
+nmds_df <- as.data.frame(nmds_result$points)
+
+# Name the nMDS dimensions
+names(nmds_df) <- c("nMDS1", "nMDS2")
+
+# Add labels to the nMDS data frame
+nmds_df$label <- balanced_sample$label
+
+# Plot the nMDS result
+ggplot(nmds_df, aes(x = nMDS1, y = nMDS2, color = label)) +
+  geom_point() +
+  theme_minimal() +
+  ggtitle("Nonmetric MDS Reduction of EMNIST Dataset") +
+  xlab("nMDS Dimension 1") +
+  ylab("nMDS Dimension 2")
+```
+
+```{r, eval = FALSE}
+# Define function to perform PCA
+perform_pca <- function(data) {
+  
+  # Remove values with near zero variance
+  near_zero <- nearZeroVar(data, saveMetrics = TRUE)
+  data_new <- data[, !near_zero$nzv]
+  
+  # Perform PCA 
+  pca <- prcomp(data_new)
+  
+  return(pca)
+}
+
+# Perform PCA
+pca <- perform_pca(data[, -785])
+pca2 <- perform_pca(altered_data)
+pca3 <- perform_pca(altered_data2)
+pca4 <- perform_pca(altered_data3)
+pca5 <- perform_pca(altered_data4)
+pca6 <- perform_pca(altered_data5)
+pca7 <- perform_pca(altered_data6)
+pca8 <- perform_pca(altered_data7)
+pca9 <- perform_pca(altered_data8)
+```
+
+```{r, eval = FALSE}
+# Define function that calculates "centre" of each respective label
+compute_pca_centroids <- function(pca) {
+  
+  # Compute average score from first 47 principal components
+  pca_centroids <- aggregate(pca$x[, 1:47], by = list(labels = label_text), FUN = mean)
+  
+  return(pca_centroids)
+}
+
+# Perform average score calculations
+pca_centroids <- compute_pca_centroids(pca)
+pca_centroids2 <- compute_pca_centroids(pca2)
+pca_centroids3 <- compute_pca_centroids(pca3)
+pca_centroids4 <- compute_pca_centroids(pca4)
+pca_centroids5 <- compute_pca_centroids(pca5)
+pca_centroids6 <- compute_pca_centroids(pca6)
+pca_centroids7 <- compute_pca_centroids(pca7)
+pca_centroids8 <- compute_pca_centroids(pca8)
+pca_centroids9 <- compute_pca_centroids(pca9)
+```
+
+```{r, eval = FALSE}
+# Define function to generate PCA dataframe
+extract_pca_df <- function(pca) {
+  pca_df <- as.data.frame(pca$x[, 1:47])
+  pca_df$label_text <- label_text
+  return(pca_df)
+}
+
+pca_df <- extract_pca_df(pca)
+pca_df2 <- extract_pca_df(pca2)
+pca_df3 <- extract_pca_df(pca3)
+pca_df4 <- extract_pca_df(pca4)
+pca_df5 <- extract_pca_df(pca5)
+pca_df6 <- extract_pca_df(pca6)
+pca_df7 <- extract_pca_df(pca7)
+pca_df8 <- extract_pca_df(pca8)
+pca_df9 <- extract_pca_df(pca9)
+```
+
+```{r, eval = FALSE}
+# Calculate explained variance
+explained_var <- pca$sdev^2 / sum(pca$sdev^2)
+
+# Calculate cumulative explained variance
+cumulative_explained_var <- cumsum(explained_var)
+
+# Create a data frame 
+explained_variance_df <- data.frame(
+  PC = 1:length(explained_var),
+  cum_var = cumulative_explained_var
+)
+
+# Find PC value that explains at least 90% of the variance
+threshold <- 0.9
+n_components <- which(cumulative_explained_var >= threshold)[1]
+
+# Plot cumulative explained variance 
+ggplot(explained_variance_df, aes(x = PC, y = cum_var)) +
+  geom_point() +
+  geom_line() +
+  geom_hline(yintercept = threshold, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = n_components, linetype = "dashed", color = "red") +
+  labs(title = "Cumulative Explained Variance",
+       x = "Principal Component",
+       y = "Cumulative Explained Variance (%)") +
+  ggthemes::theme_few() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  annotate("text", x = n_components + 25, y = threshold - 0.05, 
+           label = paste("PC ", n_components, "(", round(threshold * 100), "%)", sep = ""))
+```
+
+```{r, eval = FALSE}
+# Define function to plot dendrograms
+plot_dendrogram <- function(centroids, title = NULL) {
+  
+  # Set seed for reproducibility
+  set.seed(123)
+  
+  # Perform hierarchical clustering
+  hc <- hclust(dist(centroids[, -1]), method = "ward.D2")
+  
+  # Plot dendrogram
+  plot(hc, labels = as.character(centroids$labels), main = title)
+}
+```
+
+```{r, eval = FALSE}
+plot_dendrogram(pca_centroids, "PCA Reduced Dendrogram of Original Dataset")
+```
+
+
+```{r, eval = FALSE}
+# Define function to calculate and sort Euclidean distance of character of interest
+sorted_distances_by_character <- function(pca_centroids, char_of_interest) {
+  
+  # Extract the coordinates of the character of interest
+  char_centroid <- pca_centroids[pca_centroids$labels == char_of_interest, -1]
+
+  # Calculate the Euclidean distance between the mean score of the 
+  # character of interest and all other values
+  euclidean_distances <- as.matrix(dist(rbind(char_centroid, pca_centroids[, -1])))[1, -1]
+
+  # Create a data frame 
+  distances_with_labels <- data.frame(labels = pca_centroids$labels, 
+                                      distance = euclidean_distances)
+
+  # Sort the data frame by distance from character of interest
+  sorted_distances <- distances_with_labels[order(distances_with_labels$distance),]
+
+  return(sorted_distances)
+}
+
+# Calculate base distances, and exmaine neighbours
+sorted_distances_0 <- sorted_distances_by_character(pca_centroids, "0")
+sorted_distances_7 <- sorted_distances_by_character(pca_centroids, "7")
+sorted_distances_Z <- sorted_distances_by_character(pca_centroids, "Z")
+sorted_distances_1 <- sorted_distances_by_character(pca_centroids, "1")
+sorted_distances_I <- sorted_distances_by_character(pca_centroids, "I")
+```
+
+```{r, eval = FALSE}
+# Calculate distances with alterations
+sorted_distances_0_dot <- sorted_distances_by_character(pca_centroids2, "0")
+sorted_distances_0_slash <- sorted_distances_by_character(pca_centroids3, "0")
+
+# Get required distances
+O_distance <- sorted_distances_0[sorted_distances_0$labels == "O",]$distance
+O_distance_dot <- sorted_distances_0_dot[sorted_distances_0_dot$labels == "O",]$distance
+O_distance_slash <- sorted_distances_0_slash[sorted_distances_0_slash$labels == "O",]$distance
+
+# Calculate change
+change_dot_O <- O_distance_dot - O_distance
+change_slash_O <- O_distance_slash - O_distance
+
+# Calculate percentage change
+percentage_change_dot_O <- (change_dot_O / O_distance) * 100
+percentage_change_slash_O <- (change_slash_O / O_distance) * 100
+```
+
+```{r, eval = FALSE}
+# Calculate distances with alterations
+sorted_distances_7_middle_line <- sorted_distances_by_character(pca_centroids4, "7")
+
+# Get required distances
+nine_distance <- sorted_distances_7[sorted_distances_7$labels == "9",]$distance
+nine_distance_middle_line <- sorted_distances_7_middle_line[
+  sorted_distances_7_middle_line$labels == "9",]$distance
+
+# Calculate change
+change_middle_line_9 <- nine_distance_middle_line - nine_distance
+
+# Calculate percentage change
+percentage_change_middle_line_9 <- (change_middle_line_9 / nine_distance) * 100
+```
+
+```{r, eval = FALSE}
+# Calculate distances with alterations
+sorted_distances_1_bottom_line <- sorted_distances_by_character(pca_centroids5, "1")
+sorted_distances_1_angled_line <- sorted_distances_by_character(pca_centroids6, "1")
+sorted_distances_1_both_lines <- sorted_distances_by_character(pca_centroids7, "1")
+
+# Get required distances
+I_distance <- sorted_distances_1[sorted_distances_1$labels == "I",]$distance
+I_distance_bottom_line <- sorted_distances_1_bottom_line[
+  sorted_distances_1_bottom_line$labels == "I",]$distance
+I_distance_angled_line <- sorted_distances_1_angled_line[
+  sorted_distances_1_angled_line$labels == "I",]$distance
+I_distance_both_lines <- sorted_distances_1_both_lines[
+  sorted_distances_1_both_lines$labels == "I",]$distance
+
+# Calculate change
+change_bottom_line_I <- I_distance_bottom_line - I_distance
+change_angled_line_I <- I_distance_angled_line - I_distance
+change_both_lines_I <- I_distance_both_lines - I_distance
+
+# Calculate percentage change
+percentage_change_bottom_line_I <- (change_bottom_line_I / I_distance) * 100
+percentage_change_angled_line_I <- (change_angled_line_I / I_distance) * 100
+percentage_change_both_lines_I <- (change_both_lines_I / I_distance) * 100
+```
+
+```{r, eval = FALSE}
+# Calculate distances with alterations
+sorted_distances_Z_middle_line <- sorted_distances_by_character(pca_centroids8, "Z")
+
+# Get required distances
+two_distance <- sorted_distances_Z[sorted_distances_Z$labels == "2",]$distance
+two_distance_middle_line <- sorted_distances_Z_middle_line[
+  sorted_distances_Z_middle_line$labels == "2",]$distance
+
+# Calculate change
+change_middle_line_2 <- two_distance_middle_line - two_distance
+
+# Calculate percentage change
+percentage_change_middle_line_2 <- (change_middle_line_2 / two_distance) * 100
+```
+
+```{r, eval = FALSE}
+# Calculate distances with alterations
+sorted_distances_I_lines <- sorted_distances_by_character(pca_centroids9, "I")
+
+# Get required distances
+one_distance <- sorted_distances_I[sorted_distances_I$labels == "1",]$distance
+one_distance_lines <- sorted_distances_I_lines[
+  sorted_distances_I_lines$labels == "1",]$distance
+
+# Calculate change
+change_lines_1 <- one_distance_lines - one_distance
+
+# Calculate percentage change
+percentage_change_lines_1 <- (change_lines_1 / one_distance) * 100
+```
+
+```{r, eval = FALSE}
+# Create a data frame with percentage change results
+percentage_changes <- data.frame(
+  Typographical_Alteration = c("Dot added to Zero", "Slash added to Zero",
+                               "Line Added to Seven", "Line added to bottom of One",
+                               "Angled line added to top of One",
+                               "Both bottom and top lines added to One", 
+                               "Horizontal line added to top and bottom of I", 
+                               "Line added to middle of Z"),
+  Character = c("O", "O", "9", "I", "I", "I", "1", "2"),
+  Percentage_Change = c(percentage_change_dot_O, percentage_change_slash_O,
+                        percentage_change_middle_line_9, percentage_change_bottom_line_I,
+                        percentage_change_angled_line_I, percentage_change_both_lines_I, 
+                        percentage_change_lines_1, percentage_change_middle_line_2)
+)
+
+# Sort the data frame by percentage change (highest to lowest)
+sorted_percentage_changes <- percentage_changes[order(-percentage_changes$Percentage_Change),]
+
+# Print the sorted data frame
+print(sorted_percentage_changes)
+
+# Export the sorted data frame to a CSV file
+write.csv(sorted_percentage_changes, file = "sorted_data.csv", row.names = FALSE)
+```
+
+```{r, eval = FALSE}
+# Set for reproducibility
+set.seed(123) 
+
+# Use k-folds CV to find optimal k
+trControl <- trainControl(method = "cv", number = 5)
+
+find_k <- train(label_text ~ .,
+             method = "knn",
+             tuneGrid = expand.grid(k = 1:20),
+             trControl = trControl,
+             metric = "Accuracy",
+             data = pca_df)
+```
+
+```{r, eval = FALSE}
+split_and_train_knn <- function(data_with_labels, split_ratio = 0.8, k = 5) {
+  # Split the dataset into training and testing sets
+  set.seed(123) # Set for reproducibility
+  train_indices <- sample(1:nrow(data_with_labels), split_ratio * nrow(data_with_labels))
+  train_data <- data_with_labels[train_indices, ]
+  test_data <- data_with_labels[-train_indices, ]
+  
+  # Separate labels from data
+  train_labels <- train_data[, ncol(train_data)]
+  train_features <- train_data[, -ncol(train_data)]
+
+  test_labels <- test_data[, ncol(test_data)]
+  test_features <- test_data[, -ncol(test_data)]
+  
+  # Train the KNN classifier
+  predicted_labels <- knn(train_features, test_features, cl = train_labels, k = k)
+  
+  # Return the predicted_labels and test_data
+  return(list(predicted_labels = predicted_labels, 
+              test_data = test_data, 
+              test_labels = test_labels))
+}
+
+# Define function that calculates character of interest accuracy scores
+calculate_accuracy_score <- function(knn_result, char_of_interest) {
+  
+  # Extract true labels
+  true_labels <- knn_result$test_data$label_text
+
+  # Calculate correct predictions for the character of interest
+  correct_predictions <- sum(knn_result$predicted_labels == char_of_interest & 
+                             true_labels == char_of_interest)
+  
+  # Calculate the total number of labels for the character of interest
+  total_labels <- sum(true_labels == char_of_interest)
+  
+  # Calculate the accuracy score
+  accuracy_score <- (correct_predictions / total_labels) * 100
+  
+  return(accuracy_score)
+}
+```
+
+
+```{r, eval = FALSE}
+# Generate KNN classifiers
+knn1 <- split_and_train_knn(pca_df)
+knn2 <- split_and_train_knn(pca_df2)
+knn3 <- split_and_train_knn(pca_df3)
+knn4 <- split_and_train_knn(pca_df4)
+knn5 <- split_and_train_knn(pca_df5)
+knn6 <- split_and_train_knn(pca_df6)
+knn7 <- split_and_train_knn(pca_df7)
+knn8 <- split_and_train_knn(pca_df8)
+knn9 <- split_and_train_knn(pca_df9)
+```
+
+```{r, eval = FALSE}
+# Create set of values need for accuracy scores
+classifiers_and_labels <- list(
+  Zero_normal = list(knn = knn1, label = "0"),
+  O_normal = list(knn = knn1, label = "O"),
+  Dot_added_to_Zero = list(knn = knn2, label = "0"),
+  O_when_Dot_added_to_Zero = list(knn = knn2, label = "O"),
+  Slash_added_to_Zero = list(knn = knn3, label = "0"),
+  O_when_Slash_added_to_Zero = list(knn = knn3, label = "O"),
+  Seven_normal = list(knn = knn1, label = "7"),
+  Line_Added_to_Seven = list(knn = knn4, label = "7"),
+  Nine_normal = list(knn = knn1, label = "9"),
+  Nine_when_Line_added_to_Seven = list(knn = knn4, label = "9"),
+  One_normal = list(knn = knn1, label = "1"),
+  I_normal = list(knn = knn1, label = "I"),
+  Both_lines_added_to_One = list(knn = knn5, label = "1"),
+  I_when_Both_lines_added_to_One = list(knn = knn5, label = "I"),
+  Angled_line_added_to_One = list(knn = knn6, label = "1"),
+  I_when_Angled_line_added_to_One = list(knn = knn6, label = "I"),
+  One_when_Horizontal_lines_added_to_I = list(knn = knn7, label = "1"),
+  Horizontal_lines_added_to_I = list(knn = knn7, label = "I"),
+  Z_normal = list(knn = knn1, label = "Z"),
+  Line_added_to_Z = list(knn = knn8, label = "Z"),
+  Two_normal = list(knn = knn1, label = "2"),
+  Two_when_Line_added_to_Z = list(knn = knn8, label = "2"),
+  Horizontal_lines_added_to_I = list(knn = knn9, label = "I"),
+  One_when_Horizontal_linea_added_to_I = list(knn = knn9, label = "1")
+)
+```
+
+```{r, eval = FALSE}
+# Define function to calculate accuracy scores
+accuracy_scores_table <- function(calculate_accuracy_score, classifiers_and_labels) {
+  scores <- sapply(classifiers_and_labels, function(x) {
+    calculate_accuracy_score(x$knn, x$label)
+  })
+
+  labels <- sapply(classifiers_and_labels, function(x) {
+    x$label
+  })
+
+  df <- data.frame(Classifier = names(scores), Accuracy = scores, Label = labels)
+
+  # Calculate the base accuracy scores
+  base_accuracy <- tapply(df$Accuracy, df$Label, function(x) x[1])
+
+  # Calculate the percentage change for each accuracy score relative to its base
+  df$PercentageChange <- sapply(1:nrow(df), function(i) {
+    (df$Accuracy[i] - base_accuracy[df$Label[i]]) / base_accuracy[df$Label[i]] * 100
+  })
+
+  sorted_df <- df[order(df$Accuracy),]
+
+  return(sorted_df)
+}
+
+# Calculate accuracy df
+accuracy_scores_df <- accuracy_scores_table(calculate_accuracy_score, classifiers_and_labels)
+
+# Remove rows with 0 percentage change, so base values
+accuracy_scores_df <- accuracy_scores_df[accuracy_scores_df$PercentageChange != 0,]
+
+# Create a bar chart 
+accuracy_plot <- ggplot(ordered_accuracy_scores_df, aes(x = reorder(Classifier, PercentageChange), y = PercentageChange, fill = Label)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Percentage Change in Accuracy Scores",
+       x = "Typographical Alteration", 
+       y = "Percentage Change", 
+       fill = "Character") +  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 70, hjust = 1),
+        plot.title = element_text(hjust = 0.5)) 
+
+# Save bar chart
+ggsave("accuracy_scores.png", plot = accuracy_plot, width = 10, height = 6, dpi = 300)
+```
